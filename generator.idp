@@ -1,0 +1,717 @@
+vocabulary CoreV {
+    type Time isa int
+    // The amount of cells that should be removed
+    numOfRemovedCells : Time
+    type row isa int   // The rows of the grid (1 to 9)
+    type col isa int   // The columns of the grid (1 to 9)
+    type val isa int   // The values of the elements in the grid (1 to 9)
+    type block isa int // The 3x3 blocks of the grid
+    
+    Start:Time
+    partial Next(Time) : Time
+    
+    // Determines which grid elements belong to which blocks
+    ElementInBlock(row,col,block)
+    
+    // Blocks span the same row
+    BlocksContainSameRow(block,block)
+    // Blocks span the same column
+    BlocksContainSameCol(block,block)
+ 
+    // The value of the element at (row,col) before removing any elements
+    PreValOf(row,col) : val
+    // The cells that have been removed at initialization and their original value
+    Cn_PreValOf(row,col,val)
+ 
+    // The value of the element at (row,col) at each step
+    ValOf(Time,row,col) : val
+    // The value of the element at (row,col) at before the fist step
+    I_ValOf(row,col,val)
+    // The element that should be filled next step.
+    C_ValOf(Time,row,col,val)
+ 
+    // The method used on the element at (row,col) at step time
+    // Method(Time,row,col,methodType), split to speed up some things
+    MethodRow(Time) :row
+    MethodCol(Time) : col
+    
+    // Counters for the methods that can be used
+    Nop_count(Time)
+    UMC_count(Time)
+    HSB_count(Time)
+    HS_count(Time)
+    NS_count(Time)
+ 
+    // There exists a cell with given value in the given row, col or block at the given time
+    ValInRow(Time,row,val)
+    ValInCol(Time,col,val)
+    ValInBlock(Time,block,val)
+ 
+        
+    // UMC possible on element at given time
+    UMC(Time,row,col)
+    // HiddenSingle in block possible on element at given time
+    HiddenSingleBlock(Time,row,col)
+    // HiddenSingle possible on element at given time
+    HiddenSingle(Time,row,col)
+    // NakedSingle possible on element at given time
+    NakedSingle(Time,row,col)
+ 
+    // The possible values for a cell at the given time
+    PossibleValue(Time,row,col,val)
+    
+}
+
+// Extra vocabulary when only simple methods are used
+vocabulary SimpleV {
+    extern vocabulary CoreV
+ 
+    type methodType constructed from {Nop, UMC, HiddenSingleBlock, HiddenSingle, NakedSingle}
+
+    MethodType(Time) : methodType
+    MethodTypeCounter(Time,methodType)
+}
+
+// Extra vocabulary when complex methods must also be used
+vocabulary ComplexV {
+    extern vocabulary CoreV
+ 
+    type methodType constructed from {Nop, UMC, HiddenSingleBlock, HiddenSingle, DirectPointing, DirectHiddenPair, NakedSingle, DirectHiddenTriplet}
+    MethodType(Time) : methodType
+    MethodTypeCounter(Time,methodType)
+    
+    // DirectPointing possible on element at given time
+    DirectPointing(Time,row,col)
+    // DirectHiddenPair possible on element at given time
+    DirectHiddenPair(Time,row,col)
+    // DirectHiddenTriplet possible on element at given time
+    DirectHiddenTriplet(Time,row,col)
+
+    // counters for the extra methods
+    DP_count(Time)
+    DHP_count(Time)
+    DHT_count(Time)
+    
+    // Additional predicates for Direct Pointing:
+    // val cannot be in row of block because it must be in
+    // the same row in another block
+    ValImpossibleInRowOfBlock(Time,block,row,val)
+    ValImpossibleInColOfBlock(Time,block,col,val)
+    DPPossibleValue(Time,row,col,val)
+    
+    // Additional predicates for Direct Hidden Pair:
+    // Within a block/row/col only 2 cells can contain 2
+    // specific values, so these 2 cells cannot have any other
+    // values
+    DirectPairImpossibleB(Time,row,col,val)
+    DirectPairImpossibleR(Time,row,col,val)
+    DirectPairImpossibleC(Time,row,col,val)
+    
+    // Additional predicates for Direct Hidden Triplet:
+    // Within a block/row/col only 3 cells can contain 3
+    // specific values, so these 3 cells cannot have any other
+    // values
+    DirectTripletImpossibleB(Time,row,col,val)
+    DirectTripletImpossibleR(Time,row,col,val)
+    DirectTripletImpossibleC(Time,row,col,val)
+}
+ 
+theory CoreT : CoreV {
+    // ensure that the generator doesn't just use Nop operations to 'solve' the Sudoku puzzle
+    Nop_count(MAX[:Time] - numOfRemovedCells).
+    
+    
+    // *****************************************
+    // *** AT STEP 0 => GENERATE FULL SUDOKU ***
+    // *****************************************
+    // On every row, every number is present
+    ! r[row] : ! v[val] : ? c[col] : v = 0 | PreValOf(r,c) = v.
+    // On every collumn, every number is present
+    ! c[col] : ! v[val] : ? r[row] : v = 0 | PreValOf(r,c) = v.
+    // In every block, every number is present
+    ! b[block] : ! v[val] : ? r[row] c[col] : v = 0 |
+(ElementInBlock(r,c,b) & PreValOf(r,c) = v).
+ 
+    
+    // *****************************************
+    // ***   REMOVE THE REQUESTED #CELLS     ***
+    // *****************************************
+    // Remove a set number of elements
+    #{r c v: Cn_PreValOf(r,c,v)} = numOfRemovedCells.
+    ! r c v: Cn_PreValOf(r,c,v) => PreValOf(r,c) = v.
+ 
+    
+    // *****************************************
+    // ***                 INERTIA           ***
+    // *****************************************
+    {
+        ! i j: ValOf(Start,i,j) = v <- I_ValOf(i,j,v).
+        ! t i j v: ValOf(Next(t),i,j) = v <- ValOf(t,i,j) = v & (~?v2:
+C_ValOf(t,i,j,v2) & v ~= v2).
+        ! t i j v: ValOf(Next(t),i,j) = v2 <- ValOf(t,i,j) = v &
+C_ValOf(t,i,j,v2).
+    } 
+ 
+    {
+        ! i j v: I_ValOf(i,j,v) <- PreValOf(i,j) = v & ~Cn_PreValOf(i,j,v).
+        ! i j v: I_ValOf(i,j,0) <- PreValOf(i,j) = v & Cn_PreValOf(i,j,v).
+    } 
+ 
+ 
+    // *****************************************
+    // ***         Usefull definitions       ***
+    // *****************************************
+    // Define which elements are in which block
+    {
+        ! r[row] c[col] b[block]: ElementInBlock(r,c,b) <-
+        b = (((r - 1) - (r - 1)%3) / 3) * 3 + (((c -
+        1)-(c - 1)%3) / 3) + 1.
+    }
+    
+    // Define wich blocks contain the same row
+    {
+        ! b1 b2: BlocksContainSameRow(b1,b2) <- abs(b1-b2) < 3 & ((b1 > b2 & (b1-1)%3 > (b2-1)%3) | ((b2 > b1) & (b2-1)%3 > (b1-1)%3) | b1 = b2).
+    }
+    
+    // Define wich blocks contain the same col
+    {
+        ! b1 b2: BlocksContainSameCol(b1,b2) <- (b1-1)%3 = (b2-1)%3 .
+    }
+ 
+    // Definitions for ValInRow, ValInCol and ValInBlock
+    {!t r c: ValInRow(t,r,v) <- ValOf(t,r,c) = v.}
+    {!t r c: ValInCol(t,c,v) <- ValOf(t,r,c) = v.}
+    {!t r c: ValInBlock(t,b,v) <- ValOf(t,r,c) = v & ElementInBlock(r,c,b).}
+ 
+ 
+    // Definition for possibleValue
+    {
+        !t r c: PossibleValue(t,r,c,v) <- ValOf(t,r,c) = 0 & v ~= 0 &
+~ValInRow(t,r,v) & ~ValInCol(t,c,v) & ~ValInBlock(t,b,v) &
+ElementInBlock(r,c,b).
+    }
+    
+}
+ 
+theory TimeTheo : CoreV {
+    {
+        Start = MIN[:Time].
+        !t : Next(t) = t + 1 <- Time(t+1).
+    }
+}
+
+// Extra theory when only simple methods are used
+theory SimpleMethods : SimpleV {
+    // methodtype counters
+    {
+        !t m: MethodTypeCounter(t,m) <- MethodType(t) = m.
+        Nop_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = Nop}.
+        UMC_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = UMC}.
+        HSB_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = HiddenSingleBlock}.
+        HS_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = HiddenSingle}.
+        NS_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = NakedSingle}.
+    }
+    
+    // *****************************************
+    // ***   Define inference techniques     ***
+    // *****************************************
+    
+    {// UCM
+        !t r c: UMC(t,r,c) <- ((?9 v: ValInRow(t,r,v)) | (?9 v:
+ValInCol(t,c,v)) | (?9 v: ValInBlock(t,b,v))) & ValOf(t,r,c) = 0 &
+ElementInBlock(r,c,b).
+    }
+    
+    { // HiddenSingleBlock
+        !t r v c: HiddenSingleBlock(t,r,c) <- ?b: PossibleValue(t,r,c,v) & ElementInBlock(r,c,b) & (~?r1 c1: PossibleValue(t,r1,c1,v) & ElementInBlock(r1,c1,b) & (r~=r1 | c~=c1)).
+    }
+    
+    { // HiddenSingle
+        !t r v c: HiddenSingle(t,r,c) <- PossibleValue(t,r,c,v) & (~? c1: PossibleValue(t,r,c1,v) & c~=c1).
+        !t c v r: HiddenSingle(t,r,c) <- PossibleValue(t,r,c,v) & (~? r1: PossibleValue(t,r1,c,v) & r~=r1).
+    }
+
+    
+    { // NakedSingle
+        !t r c: NakedSingle(t,r,c) <- ?1 v: PossibleValue(t,r,c,v).
+    }
+    
+    // *****************************************
+    // *** BIND METHODTYPE TO ITS PREDICATE  ***
+    // *****************************************
+    
+    !t: MethodType(t) = UMC => (?r c: MethodRow(t) = r & MethodCol(t) = c & UMC(t,r,c)).
+    
+    !t: MethodType(t) = HiddenSingleBlock => (?r c: MethodRow(t) = r & MethodCol(t) = c & HiddenSingleBlock(t,r,c)) & (~?r c: UMC(t,r,c)).
+    
+    !t: MethodType(t) = HiddenSingle => (?r c: MethodRow(t) = r & MethodCol(t) = c & HiddenSingle(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c)).
+   
+    
+    !t: MethodType(t) = NakedSingle => (?r c: MethodRow(t) = r & MethodCol(t) = c & NakedSingle(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c) | HiddenSingle(t,r,c)).
+    
+    
+    // *****************************************
+    // ***   RE-ADD ONE ELEMENT EACH STEP    ***
+    // *****************************************
+    
+    // One method per step
+    ! t: ?1 r: MethodRow(t) = r.
+    ! t: ?1 c: MethodCol(t) = c.
+    ! t: ?1 m: MethodType(t) = m.
+    
+    // Bind method and C_ValOf
+    !t r c v: C_ValOf(t,r,c,v) <=> MethodRow(t) = r & MethodCol(t) = c & MethodType(t) ~= Nop & PreValOf(r,c) = v.
+    
+    // Never do method on a nonzero cell
+    !t r c: MethodRow(t) = r & MethodCol(t) = c => ValOf(t,r,c) = 0.
+    
+}
+
+// Extra theory when complex methods must also be used
+theory ComplexMethods : ComplexV {
+    // methodtype counters
+    {
+        !t m: MethodTypeCounter(t,m) <- MethodType(t) = m.
+        Nop_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = Nop}.
+        UMC_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = UMC}.
+        HSB_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = HiddenSingleBlock}.
+        HS_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = HiddenSingle}.
+        NS_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = NakedSingle}.
+        DP_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = DirectPointing}.
+        DHP_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = DirectHiddenPair}.
+        DHT_count(num) <- num = #{t m: MethodTypeCounter(t,m) & m = DirectHiddenTriplet}.
+    }
+
+    
+    
+    // *****************************************
+    // ***         Usefull definitions       ***
+    // *****************************************
+    
+    // A value cannot be in a row of a block, because it has to be in that row of a different block.
+    {
+        !t b r v: ValImpossibleInRowOfBlock(t,b,r,v) <- ?b1: b1 ~= b & BlocksContainSameRow(b,b1) & (! r1 c1 : ElementInBlock(r1,c1,b1) & PossibleValue(t,r1,c1,v) => r1 = r) & ?r1 c1: ElementInBlock(r1,c1,b1) & PossibleValue(t,r1,c1,v) & r1 = r.
+    }
+    
+    // A value cannot be in a collumn of a block, because it has to be in that collumn of a different block.
+    {
+        !t b c v: ValImpossibleInColOfBlock(t,b,c,v) <- ?b1: b1 ~= b & BlocksContainSameCol(b,b1) & (! r1 c1 : ElementInBlock(r1,c1,b1) & PossibleValue(t,r1,c1,v) => c1 = c) & ?r1 c1: ElementInBlock(r1,c1,b1) & PossibleValue(t,r1,c1,v) & c1 = c.
+    }
+    
+    //Possible values under direct pointing constraints
+    {
+        !t r c v: DPPossibleValue(t,r,c,v) <- PossibleValue(t,r,c,v) & ?b: ElementInBlock(r,c,b) & ~ValImpossibleInRowOfBlock(t,b,r,v) & ~ValImpossibleInColOfBlock(t,b,c,v).
+    }
+    
+    // Within a block/row/col only 2 cells can contain 2 specific values, so these 2 cells cannot have any other values
+    {
+        !t r c v: DirectPairImpossibleB(t,r,c,v) <- ?b: ElementInBlock(r,c,b) & ?v1 v2: v~=v1 & v~=v2 & v1~=v2 & PossibleValue(t,r,c,v1) & PossibleValue(t,r,c,v2) & ?1 r1 c1: ElementInBlock(r1,c1,b) & (r~=r1|c~=c1) & (PossibleValue(t,r1,c1,v1) | PossibleValue(t,r1,c1,v2)).
+        !t r c v: DirectPairImpossibleR(t,r,c,v) <- ?v1 v2: v~=v1 & v~=v2 & v1~=v2 & PossibleValue(t,r,c,v1) & PossibleValue(t,r,c,v2) & ?1 c1: c~=c1 & (PossibleValue(t,r,c1,v1) | PossibleValue(t,r,c1,v2)).
+        !t r c v: DirectPairImpossibleC(t,r,c,v) <- ?v1 v2: v~=v1 & v~=v2 & v1~=v2 & PossibleValue(t,r,c,v1) & PossibleValue(t,r,c,v2) & ?1 r1: r~=r1 & (PossibleValue(t,r1,c,v1) | PossibleValue(t,r1,c,v2)).
+    }
+    
+    // Within a block/row/col only 3 cells can contain 3 specific values, so these 3 cells cannot have any other values
+    {
+        !t r c v: DirectTripletImpossibleB(t,r,c,v) <- ?b: ElementInBlock(r,c,b) & ?v1 v2 v3: v~=v1 & v~=v2 & v~=v3 & v1~=v2 & v1~=v3 & v2 ~=v3 & PossibleValue(t,r,c,v1) & PossibleValue(t,r,c,v2) & PossibleValue(t,r,c,v3) & ?2 r1 c1: ElementInBlock(r1,c1,b) & (r~=r1|c~=c1) & (PossibleValue(t,r1,c1,v1) | PossibleValue(t,r1,c1,v2) | PossibleValue(t,r1,c1,v3)).
+        !t r c v: DirectTripletImpossibleR(t,r,c,v) <- ?v1 v2 v3: v~=v1 & v~=v2 & v~=v3 & v1~=v2 & v1~=v3 & v2 ~=v3 & PossibleValue(t,r,c,v1) & PossibleValue(t,r,c,v2) & PossibleValue(t,r,c,v3) & ?2 c1: c~=c1 & (PossibleValue(t,r,c1,v1) | PossibleValue(t,r,c1,v2) | PossibleValue(t,r,c1,v3)).
+        !t r c v: DirectTripletImpossibleC(t,r,c,v) <- ?v1 v2 v3: v~=v1 & v~=v2 & v~=v3 & v1~=v2 & v1~=v3 & v2 ~=v3 & PossibleValue(t,r,c,v1) & PossibleValue(t,r,c,v2) & PossibleValue(t,r,c,v3) & ?2 r1: r~=r1 & (PossibleValue(t,r1,c,v1) | PossibleValue(t,r1,c,v2) | PossibleValue(t,r1,c,v3)).
+    }
+
+    
+    // *****************************************
+    // ***   Define inference techniques     ***
+    // *****************************************
+    
+    {// UCM
+        !t r c: UMC(t,r,c) <- ((?9 v: ValInRow(t,r,v)) | (?9 v:
+ValInCol(t,c,v)) | (?9 v: ValInBlock(t,b,v))) & ValOf(t,r,c) = 0 &
+ElementInBlock(r,c,b).
+    }
+    
+    { // HiddenSingleBlock
+        !t r v c: HiddenSingleBlock(t,r,c) <- ?b: PossibleValue(t,r,c,v) & ElementInBlock(r,c,b) & (~?r1 c1: PossibleValue(t,r1,c1,v) & ElementInBlock(r1,c1,b) & (r~=r1 | c~=c1)).
+    }
+    
+    { // HiddenSingle
+        !t r v c: HiddenSingle(t,r,c) <- PossibleValue(t,r,c,v) & (~? c1: PossibleValue(t,r,c1,v) & c~=c1).
+        !t c v r: HiddenSingle(t,r,c) <- PossibleValue(t,r,c,v) & (~? r1: PossibleValue(t,r1,c,v) & r~=r1).
+    }
+    
+    { // DirectPointing
+        !t r v c: DirectPointing(t,r,c) <- ?b: DPPossibleValue(t,r,c,v) & ElementInBlock(r,c,b) & (~?r1 c1: DPPossibleValue(t,r1,c1,v) & ElementInBlock(r1,c1,b) & (r~=r1 | c~=c1)).
+    }
+  
+    { // DirectHiddenPair
+        !t r v c: DirectHiddenPair(t,r,c) <- ?b: (PossibleValue(t,r,c,v) & ~DirectPairImpossibleB(t,r,c,v)) & ElementInBlock(r,c,b) & (~?r1 c1: (PossibleValue(t,r1,c1,v) & ~DirectPairImpossibleB(t,r1,c1,v)) & ElementInBlock(r1,c1,b) & (r~=r1 | c~=c1)).
+        !t r v c: DirectHiddenPair(t,r,c) <- (PossibleValue(t,r,c,v) & ~DirectPairImpossibleR(t,r,c,v)) & (~? c1: (PossibleValue(t,r,c1,v) & ~DirectPairImpossibleR(t,r,c1,v)) & c~=c1).
+        !t c v r: DirectHiddenPair(t,r,c) <- (PossibleValue(t,r,c,v) & ~DirectPairImpossibleC(t,r,c,v)) & (~? r1: (PossibleValue(t,r1,c,v) & ~DirectPairImpossibleC(t,r1,c,v)) & r~=r1).
+    }
+    
+    { // NakedSingle
+        !t r c: NakedSingle(t,r,c) <- ?1 v: PossibleValue(t,r,c,v).
+    }
+    
+    { // DirectHiddenTriplet
+        !t r v c: DirectHiddenTriplet(t,r,c) <- ?b: (PossibleValue(t,r,c,v) & ~DirectTripletImpossibleB(t,r,c,v)) & ElementInBlock(r,c,b) & (~?r1 c1: (PossibleValue(t,r1,c1,v) & ~DirectTripletImpossibleB(t,r1,c1,v)) & ElementInBlock(r1,c1,b) & (r~=r1 | c~=c1)).
+        !t r v c: DirectHiddenTriplet(t,r,c) <- (PossibleValue(t,r,c,v) & ~DirectTripletImpossibleR(t,r,c,v)) & (~? c1: (PossibleValue(t,r,c1,v) & ~DirectTripletImpossibleR(t,r,c1,v)) & c~=c1).
+        !t c v r: DirectHiddenTriplet(t,r,c) <- (PossibleValue(t,r,c,v) & ~DirectTripletImpossibleC(t,r,c,v)) & (~? r1: (PossibleValue(t,r1,c,v) & ~DirectTripletImpossibleC(t,r1,c,v)) & r~=r1).
+    }
+    
+    
+    // *****************************************
+    // *** BIND METHODTYPE TO ITS PREDICATE  ***
+    // *****************************************
+    
+    !t: MethodType(t) = UMC => (?r c: MethodRow(t) = r & MethodCol(t) = c & UMC(t,r,c)).
+    
+    !t: MethodType(t) = HiddenSingleBlock => (?r c: MethodRow(t) = r & MethodCol(t) = c & HiddenSingleBlock(t,r,c)) & (~?r c: UMC(t,r,c)).
+    
+    !t: MethodType(t) = HiddenSingle => (?r c: MethodRow(t) = r & MethodCol(t) = c & HiddenSingle(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c)).
+    
+    !t: MethodType(t) = DirectPointing => (?r c: MethodRow(t) = r & MethodCol(t) = c & DirectPointing(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c) | HiddenSingle(t,r,c)).
+   
+    !t: MethodType(t) = DirectHiddenPair => (?r c: MethodRow(t) = r & MethodCol(t) = c & DirectHiddenPair(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c) | HiddenSingle(t,r,c) | DirectPointing(t,r,c)).
+    
+    !t: MethodType(t) = NakedSingle => (?r c: MethodRow(t) = r & MethodCol(t) = c & NakedSingle(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c) | HiddenSingle(t,r,c) | DirectPointing(t,r,c) | DirectHiddenPair(t,r,c)).
+    
+    
+    !t: MethodType(t) = DirectHiddenTriplet => (?r c: MethodRow(t) = r & MethodCol(t) = c & DirectHiddenTriplet(t,r,c)) & (~?r c: UMC(t,r,c) | HiddenSingleBlock(t,r,c) | HiddenSingle(t,r,c) | DirectPointing(t,r,c) | DirectHiddenPair(t,r,c) | NakedSingle(t,r,c)).
+    
+    // *****************************************
+    // ***   RE-ADD ONE ELEMENT EACH STEP    ***
+    // *****************************************
+    
+    // One method per step
+    ! t: ?1 r: MethodRow(t) = r.
+    ! t: ?1 c: MethodCol(t) = c.
+    ! t: ?1 m: MethodType(t) = m.
+    
+    // Bind method and C_ValOf
+    !t r c v: C_ValOf(t,r,c,v) <=> MethodRow(t) = r & MethodCol(t) = c & MethodType(t) ~= Nop & PreValOf(r,c) = v.
+    
+    // Never do method on a nonzero cell
+    !t r c: MethodRow(t) = r & MethodCol(t) = c => ValOf(t,r,c) = 0.
+    
+}
+
+theory SimpleForceMedium : SimpleV {
+    ?t: HS_count(t). 
+    ~?t : NS_count(t).
+}
+
+theory SimpleForceHard : SimpleV {
+    ?t : NS_count(t).
+}
+
+theory ComplexForceMedium : ComplexV {
+    ?t: HS_count(t).
+    ~?t : NS_count(t) | DP_count(t) | DHP_count(t) | DHT_count(t).
+}
+
+theory ComplexForceHard : ComplexV {
+    ?t : NS_count(t) | DP_count(t) | DHP_count(t) | DHT_count(t).
+}
+
+structure S : CoreV {
+    Time = {1..64}
+    Start = 1
+    row = {1..9}
+    col = {1..9}
+    val = {0..9}
+    block = {1..9}
+}
+ 
+procedure main() {  
+    local x = os.clock()
+    TMerge = merge(CoreT, TimeTheo);
+    SMerge = S
+    
+    UI()
+    print("STARTING SUDOKU GENERATION")
+    io.flush()
+
+    local m = modelexpand(TMerge, SMerge);
+    printmodels(m);
+    print(string.format("elapsed time: %.2f\n", os.clock() - x))
+ 
+    local model = m[1];
+    local numberOfSteps = 64;
+    prettyPrintSteps(model, numberOfSteps);
+    explainerPrintSudoku(model);
+}
+ 
+
+
+
+procedure UI(){
+    print("WELCOME TO THE CUSTOMIZABLE SUDOKU CREATOR.")
+    print("")
+    print("OPTIONS: ")
+    print("1: Generate a new Sudoku")
+    print("2: Work on a partially filled Sudoku")
+    print("3: Generate a new Sudoku from a filled in Sudoku")
+    io.flush()
+    local option = ""
+    while (option ~= "1" and option ~= "2" and option ~= "3") do
+        print("Enter option nr: ")
+        io.flush()
+        option = io.read()
+    end
+    print("")
+    print("")
+    io.flush()
+    local choice = UIOptions()
+    if option == "1" then
+        if(choice == 1) then
+            UIMoreOptions()
+        end
+    end
+    if option == "2" then
+        userSudoku(SMerge)
+    end
+    if option == "3" then
+        baseSudoku(SMerge)
+        if(choice == 1) then
+            UIMoreOptions()
+        end
+    end
+}
+
+
+procedure UIOptions(){
+    print("SELECT GENERATION MODE: ")
+    print("1: limited (does not use memory heavy techniques)")
+    print("2: full (EXTREMELY COMPUTATIONALLY/MEMORY INTENSIVE!)")
+    io.flush()
+    local option = ""
+    while (option ~= "1" and option ~= "2") do
+        print("Enter option nr: ")
+        io.flush()
+        option = io.read()
+    end
+    print("")
+    print("")
+    io.flush()
+    if option == "1" then
+        TMerge = merge(TMerge, SimpleMethods)
+        return 1
+    end
+    if option == "2" then
+        TMerge = merge(TMerge, ComplexMethods)
+        return 2
+    end
+}
+
+
+procedure UIMoreOptions() {
+    print("WOULD YOU LIKE TO SET MORE OPTIONS? ")
+    print("1: yes")
+    print("anything else: no")
+    io.flush()
+    local option = ""
+    while (option ~= "1" and option ~= "2") do
+        print("Enter option nr: ")
+        io.flush()
+        option = io.read()
+    end
+    print("")
+    print("")
+    io.flush()
+    if option == "1" then
+        local option2 = ""
+        while option2 ~= "6" do
+            print("OPTIONS: ")
+    		print("1: Set # of empty starting cells")
+    		print("2: Set # UMC")
+            print("3: Set # Hidden Single in block")
+            print("4: Set # Hidden Single (not in block)")
+            print("5: Set # Naked Single")
+            print("6: quit setting options")
+            print("Enter option nr: ")
+    		io.flush()
+            option2 = io.read()
+            if option2 == "1" then
+                local num = readInputAmount("empty cells")
+                local t = {}
+    			t[1] = num;
+    			local oplossing = SMerge[CoreV::numOfRemovedCells].graph;
+    			maketrue(oplossing, t);
+            end
+            if option2 == "2" then
+                local num = readInputAmount("UMC")
+                local t = {}
+    			t[1] = num;
+    			local oplossing = SMerge[CoreV::UMC_count];
+    			maketrue(oplossing, t);
+            end
+            if option2 == "3" then
+                local num = readInputAmount("HSB")
+                local t = {}
+    			t[1] = num;
+    			local oplossing = SMerge[CoreV::HSB_count];
+    			maketrue(oplossing, t);
+            end
+            if option2 == "4" then
+                local num = readInputAmount("HS")
+                local t = {}
+    			t[1] = num;
+    			local oplossing = SMerge[CoreV::HS_count];
+    			maketrue(oplossing, t);
+            end
+            if option2 == "5" then
+                local num = readInputAmount("NS")
+                local t = {}
+    			t[1] = num;
+    			local oplossing = SMerge[CoreV::NS_count];
+    			maketrue(oplossing, t);
+            end
+            if (option2 ~= "6") then
+                option2 = ""
+            end
+        end
+    end
+}
+
+
+procedure readInputAmount(displayString) {
+    print("enter amount for " .. displayString)
+    io.flush()
+    local amount = ""
+    amount = io.read()
+    local num = tonumber(amount)
+    print("setting " .. displayString .. " to " .. amount)
+    
+    return num
+}
+
+
+    // *****************************************
+    // ***  SPECIAL SUDOKU MODEL GENERATION  ***
+    // *****************************************
+
+
+// work on a given sudoku (partially completed)
+procedure userSudoku(Struct){
+    print("paste Sudoku here. All on one line with a space between each row. Empty cells should be dots (.) :")
+    local sudoku = io.read()
+    local row = 1
+    for i in string.gmatch(sudoku, "([^%s]+)") do
+        local col = 1
+        for j in string.gmatch(i, "(.)") do
+            if(j ~= ".") then
+                local t = {}
+                t[1] = 1;
+                t[2] = row;
+                t[3] = col;
+                t[4] = j;
+                print("setting: " .. row .. col .. j)
+                local oplossing = Struct[CoreV::ValOf].graph;
+                maketrue(oplossing, t);
+            end
+            col = col + 1
+        end
+        row = row + 1
+    end
+    
+}
+
+
+// work on a completed base sudoku (builds new Sudoku from complete Sudoku)
+procedure baseSudoku(Struct){
+    print("paste Sudoku here. All on one line with a space between each row:")
+    local sudoku = io.read()
+    local row = 1
+    for i in string.gmatch(sudoku, "([^%s]+)") do
+        local col = 1
+        for j in string.gmatch(i, "(.)") do
+            local t = {}
+            t[1] = row;
+            t[2] = col;
+            t[3] = j;
+            print("setting: " .. row .. col .. j)
+            local oplossing = Struct[CoreV::PreValOf].graph;
+            maketrue(oplossing, t);
+            col = col + 1
+        end
+        row = row + 1
+    end
+    
+}
+
+
+
+
+    // *****************************************
+    // ***     SUDOKU PRINTING PROCEDURES    ***
+    // *****************************************
+
+procedure prettyPrintSteps(model, steps){
+    prettyPrintSudokuInitial(model);
+    for i=1,steps do
+        prettyPrintSudoku(model,i);
+    end
+}
+ 
+procedure prettyPrintSudoku(model, step){
+    print("pretty printing sudoku at step " .. step .. " : \n \n")
+    values = model[CoreV::ValOf];
+    for i=1,9 do
+        local line = "";
+           for j=1,9 do
+            if(j == 1 or j == 4 or j == 7) then
+                line = line .. " |";
+            end
+            char = values(step,i,j);
+            if(char == 0) then
+                char = " ";
+            end
+            line = line .. " " .. char;
+           end
+        if((i-1)%3 == 0) then
+            print(" -------------------------");
+        end
+        print(line .. " |");
+    end
+    print(" -------------------------");
+}
+ 
+ 
+procedure prettyPrintSudokuInitial(model){
+    print("pretty printing initial sudoku: \n \n")
+    values = model[CoreV::PreValOf];
+    for i=1,9 do
+        local line = "";
+           for j=1,9 do
+            if(j == 1 or j == 4 or j == 7) then
+                line = line .. " |";
+            end
+            char = values(i,j);
+            if(char == 0) then
+                char = " ";
+            end
+            line = line .. " " .. char;
+           end
+        if((i-1)%3 == 0) then
+            print(" -------------------------");
+        end
+        print(line .. " |");
+    end
+    print(" -------------------------");
+}
+ 
+// print sudoku in format for use by sudokuExplainer app
+procedure explainerPrintSudoku(model){
+    print("printing sudoku in sudokuExplainer format: \n \n")
+    values = model[CoreV::ValOf];
+    for i=1,9 do
+        local line = "";
+           for j=1,9 do
+            char = values(1,i,j);
+            if(char == 0) then
+                char = ".";
+            end
+            line = line .. char;
+           end
+        print(line);
+    end
+}
